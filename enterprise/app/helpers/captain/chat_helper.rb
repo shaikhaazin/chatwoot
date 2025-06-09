@@ -7,7 +7,7 @@ module Captain::ChatHelper
         model: @model,
         messages: @messages,
         tools: @tool_registry&.registered_tools || [],
-        response_format: { type: 'json_object' },
+        # response_format: { type: 'json_object' },
         temperature: @assistant&.config&.[]('temperature').to_f || 1
       }
     )
@@ -23,12 +23,26 @@ module Captain::ChatHelper
   def handle_response(response)
     Rails.logger.debug { "#{self.class.name} Assistant: #{@assistant.id}, Received response #{response}" }
     message = response.dig('choices', 0, 'message')
+    return nil if message.nil?
+
     if message['tool_calls']
       process_tool_calls(message['tool_calls'])
     else
-      message = JSON.parse(message['content'].strip)
-      persist_message(message, 'assistant')
-      message
+      content = message['content']&.strip
+      #Rails.logger.debug { "#{self.class.name} Assistant: #{@assistant.id}, Raw content: #{content}" }  #Added
+      return nil if content.blank?
+
+      begin
+        # Split by newline and take the first JSON object
+        first_json = content.split("\n").first
+        parsed_message = JSON.parse(first_json)  #instead of (content)
+        persist_message(parsed_message, 'assistant')
+        parsed_message
+      rescue JSON::ParserError => e
+        Rails.logger.error "#{self.class.name} Assistant: #{@assistant.id}, Error parsing response: #{e.message}"
+        Rails.logger.error "#{self.class.name} Assistant: #{@assistant.id}, Content that failed to parse: #{content}" #Added
+        { 'response' => content }
+      end
     end
   end
 
